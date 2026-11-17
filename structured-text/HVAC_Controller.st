@@ -1,9 +1,12 @@
 (*
     IEC 61131-3 Structured Text reference implementation.
-    Example variables are declared in the VAR section.
-    Adapt timer instances and I/O mapping to the target PLC runtime.
 
-    Safety trips override minimum run-time protection.
+    This is an educational reference. Type declaration placement and TON
+    invocation syntax may require adaptation for the target PLC vendor.
+
+    Timers are invoked exactly once per PLC scan below. MinOffTimer runs only
+    while the state is OFF_COOLDOWN, so time spent in DEFROST or FAULT_LOCKOUT
+    does not count toward the post-condition minimum OFF interval.
 *)
 
 TYPE E_HVAC_STATE :
@@ -25,7 +28,7 @@ VAR
     SensorValid : BOOL := TRUE;
     HighPressureOK : BOOL := TRUE;
     LowPressureOK : BOOL := TRUE;
-    DefrostRequest : BOOL := FALSE;
+    DefrostRequest : BOOL := FALSE; (* Treat as a one-shot request/pulse. *)
     ResetFault : BOOL := FALSE;
 
     CompressorOutput : BOOL := FALSE;
@@ -38,25 +41,18 @@ VAR
     MinOffTimer : TON;
     DefrostTimer : TON;
 
-    CompressorWasOn : BOOL := FALSE;
-    CompressorStartPulse : BOOL := FALSE;
-    CompressorStopPulse : BOOL := FALSE;
     FaultText : STRING(80) := '';
 END_VAR
 
-(*
-    In a real PLC project, replace these edge flags with R_TRIG/F_TRIG
-    function blocks or equivalent edge-detection logic. The TON instances
-    must be called cyclically by the PLC task.
-*)
-
-CompressorStartPulse := CompressorOutput AND NOT CompressorWasOn;
-CompressorStopPulse := NOT CompressorOutput AND CompressorWasOn;
-CompressorWasOn := CompressorOutput;
-
+(* Call each timer once per scan. *)
 MinOnTimer(IN := CompressorOutput, PT := T#180s);
-MinOffTimer(IN := NOT CompressorOutput, PT := T#300s);
+MinOffTimer(
+    IN := (State = OFF_COOLDOWN) AND NOT CompressorOutput,
+    PT := T#300s
+);
+DefrostTimer(IN := (State = DEFROST), PT := T#30s);
 
+(* Safety interlocks have priority over all normal sequencing. *)
 IF NOT SensorValid THEN
     CompressorOutput := FALSE;
     EvaporatorFanOutput := FALSE;
@@ -96,10 +92,8 @@ ELSIF DefrostRequest AND (State <> DEFROST) THEN
 ELSIF State = DEFROST THEN
     CompressorOutput := FALSE;
     EvaporatorFanOutput := FALSE;
-    DefrostTimer(IN := TRUE, PT := T#30s);
 
     IF DefrostTimer.Q THEN
-        DefrostTimer(IN := FALSE, PT := T#30s);
         EvaporatorFanOutput := TRUE;
         State := OFF_COOLDOWN;
     END_IF;
