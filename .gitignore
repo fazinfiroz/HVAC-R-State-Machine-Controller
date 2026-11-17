@@ -1,0 +1,16 @@
+# Compiled binaries and object files
+*.exe
+*.o
+*.out
+hvac_sim
+test_controller
+
+# Build output
+build/
+
+# IDE settings
+.vscode/
+.idea/
+
+# Logs
+*.log
